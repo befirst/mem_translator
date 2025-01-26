@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.env
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Docker
+*.dockerignore
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Miscellaneous
+*.DS_Store
+*.egg-info/
+*.egg
+*.whl
