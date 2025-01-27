@@ -16,8 +16,13 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
     # Database Settings
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql://user:password@db:5432/mem_translator"
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD")
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB")
+
+    DATABASE_URL: str = (
+        f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}",
+        f"@db:5432/{POSTGRES_DB}",
     )
 
     # AWS Settings

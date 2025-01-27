@@ -1,5 +1,3 @@
-import asyncio
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -28,15 +26,18 @@ app.add_middleware(
 # Include routers
 app.include_router(memes.router, prefix=settings.API_V1_STR)
 
+
 @app.on_event("startup")
 async def startup_event():
     """Start the Telegram bot when the FastAPI application starts"""
     await bot.start_polling()
 
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Stop the Telegram bot when the FastAPI application shuts down"""
     await bot.stop()
+
 
 @app.get("/")
 async def root():
