@@ -21,47 +21,47 @@ class MemeProcessor:
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
         )
+
+        # Define whitelist as a string instead of tuple
         tessedit_char_whitelist = (
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-            "abcdefghijklmnopqrstuvwxyz",
-            "0123456789.,!?'",
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            + "abcdefghijklmnopqrstuvwxyz"
+            + "0123456789.,!?\\'"
         )
 
         # Configure Tesseract with more specific options
+        base_config = "--oem 3"
         self.tesseract_config = {
-            # Default: Multi-line text
-            "default": "--oem 3 --psm 3 -c tessedit_create_txt=1",
-            # Uniform block of text
+            "default": f"{base_config} --psm 3 -c tessedit_create_txt=1",
             "meme": (
-                "--oem 3 --psm 6 -c preserve_interword_spaces=1 ",
-                "-c tessedit_create_txt=1",
+                f"{base_config} --psm 6 "
+                "-c preserve_interword_spaces=1 "
+                "-c tessedit_create_txt=1"
             ),
-            # Single line with limited characters
             "single": (
-                "--oem 3 --psm 7 -c ",
-                f'tessedit_char_whitelist="{tessedit_char_whitelist}" ',
-                "-c tessedit_create_txt=1",
+                f"{base_config} --psm 7 "
+                f"-c tessedit_char_whitelist={tessedit_char_whitelist} "
+                "-c tessedit_create_txt=1"
             ),
-            # Single word
-            "word": "--oem 3 --psm 8 -c tessedit_create_txt=1",
-            # Sparse text with no rotation
+            "word": f"{base_config} --psm 8 -c tessedit_create_txt=1",
             "sparse": (
-                "--oem 3 --psm 11 -c tessedit_do_invert=0 -c",
-                "tessedit_create_txt=1",
+                f"{base_config} --psm 11 "
+                "-c tessedit_do_invert=0 "
+                "-c tessedit_create_txt=1"
             ),
-            # Vertical text
-            "vertical": "--oem 3 --psm 5 -c tessedit_create_txt=1",
-            # For meme captions
+            "vertical": f"{base_config} --psm 5 -c tessedit_create_txt=1",
             "caption": (
-                "--oem 3 --psm 6 -c tessedit_char_blacklist=|",
-                " -c preserve_interword_spaces=1 -c tessedit_create_txt=1",
+                f"{base_config} --psm 6 "
+                "-c tessedit_char_blacklist='|' "
+                "-c preserve_interword_spaces=1 "
+                "-c tessedit_create_txt=1"
             ),
-            # Clean text with noise removal
             "clean": (
-                "--oem 3 --psm 3 ",
-                f"-c tessedit_char_whitelist={tessedit_char_whitelist} ",
-                "-c tessedit_create_txt=1 -c textord_heavy_nr=1",
-                "-c textord_min_linesize=3",
+                f"{base_config} --psm 3 "
+                f"-c tessedit_char_whitelist={tessedit_char_whitelist} "
+                "-c tessedit_create_txt=1 "
+                "-c textord_heavy_nr=1 "
+                "-c textord_min_linesize=3"
             ),
         }
 
@@ -86,15 +86,22 @@ class MemeProcessor:
         # Split into horizontal regions (for meme captions)
         regions = []
         height = bbox[3] - bbox[1]
-        # If image is tall enough, try to split into top/middle/bottom
+
+        # Always add the full image region first
+        regions.append(bbox)
+
+        # If image is tall enough, add additional regions
         if height > 100:
+            # Top region (header/title)
             top_region = (bbox[0], bbox[1], bbox[2], bbox[1] + height // 3)
+            # Middle region (main content)
             middle_region = (
                 bbox[0],
                 bbox[1] + height // 3,
                 bbox[2],
                 bbox[1] + 2 * height // 3,
             )
+            # Bottom region (footer)
             bottom_region = (
                 bbox[0],
                 bbox[1] + 2 * height // 3,
@@ -102,43 +109,37 @@ class MemeProcessor:
                 bbox[3],
             )
             regions.extend([top_region, middle_region, bottom_region])
-        else:
-            regions.append(bbox)
 
         return regions
 
     def clean_text(self, text: str) -> str:
-        """Clean and normalize extracted text"""
+        """Clean and normalize text while preserving numbers and structure"""
         if not text:
             return ""
 
-        # Remove non-printable characters
-        text = "".join(char for char in text if char.isprintable())
-
-        # Remove repeated whitespace
+        # Replace multiple spaces with single space
         text = " ".join(text.split())
 
-        # Fix common OCR mistakes
-        replacements = {
-            "|": "I",
-            "[": "I",
-            "]": "I",
-            "{": "(",
-            "}": ")",
-            "0": "O",
-            "1": "I",
-            "l": "I",
-            "rn": "m",
-            "vv": "w",
-        }
-        for old, new in replacements.items():
-            text = text.replace(old, new)
+        # Fix basic character issues
+        text = text.replace("|", "I")
 
-        # Remove single characters (likely noise)
-        text = " ".join(word for word in text.split() if len(word) > 1)
+        # Split into sentences and clean each
+        sentences = text.split(". ")
+        cleaned_sentences = []
 
-        # Fix capitalization
-        text = ". ".join(s.capitalize() for s in text.split(". "))
+        for sentence in sentences:
+            if sentence:
+                # Capitalize first letter if it's a letter
+                if sentence[0].isalpha():
+                    sentence = sentence[0].upper() + sentence[1:]
+                cleaned_sentences.append(sentence)
+
+        # Rejoin sentences
+        text = ". ".join(cleaned_sentences)
+
+        # Ensure proper spacing around punctuation
+        text = re.sub(r"\s*([.,!?])\s*", r"\1 ", text)
+        text = re.sub(r"\s+", " ", text)
 
         return text.strip()
 
@@ -180,12 +181,10 @@ class MemeProcessor:
 
         return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-    def preprocess_image(self, image: Image.Image) -> List[
-        Tuple[
-            str,
-            Image.Image,
-        ]
-    ]:
+    def preprocess_image(
+        self,
+        image: Image.Image,
+    ) -> List[Tuple[str, Image.Image],]:
         """Preprocess image to improve OCR accuracy"""
         processed_images = []
 
@@ -214,14 +213,6 @@ class MemeProcessor:
         auto_contrast = ImageOps.autocontrast(gray, cutoff=0.5)
         processed_images.append(("auto_contrast", auto_contrast))
 
-        # Multiple threshold levels
-        for threshold in [100, 128, 150]:
-            threshold_img = gray.point(
-                lambda x: 255 if x > threshold else 0,
-                "1",
-            )
-            processed_images.append((f"threshold_{threshold}", threshold_img))
-
         # Edge enhanced
         edge_enhanced = gray.filter(ImageFilter.EDGE_ENHANCE_MORE)
         processed_images.append(("edge_enhanced", edge_enhanced))
@@ -239,38 +230,75 @@ class MemeProcessor:
     def post_process_results(
         self, results: List[Tuple[str, str, float]]
     ) -> List[Tuple[str, str, float]]:
-        """Post-process and filter OCR results"""
-        processed_results = []
-        seen_texts = set()
+        """Post-process and filter OCR results, returning up to top 3"""
+        logger.info(f"Input results: {results}")
 
-        for text, method, confidence in results:
-            # Clean the text
-            cleaned_text = self.clean_text(text)
-            if not cleaned_text:
-                continue
+        # First, get the full-image results (highest confidence)
+        full_image_results = [
+            (text, method, conf)
+            for text, method, conf in results
+            if not method.startswith("region_") and conf > 90
+        ]
 
-            # Skip if we've seen this text before
-            if cleaned_text.lower() in seen_texts:
-                continue
+        # Sort by confidence and length
+        full_image_results.sort(key=lambda x: (x[2], len(x[0])), reverse=True)
 
-            # Skip very short texts unless they're very confident
-            if len(cleaned_text) < 3 and confidence < 90:
-                continue
+        if full_image_results:
+            # If we have good full-image results, return up to 3 best ones
+            return full_image_results[:3]
 
-            # Skip nonsense strings (too many consonants or numbers)
-            consonants = len(
-                re.findall(
-                    r"[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]",
-                    cleaned_text,
+        # If no good full-image results, try to combine region results
+        region_results = {}
+        for text, method, conf in results:
+            if method.startswith("region_"):
+                region_num = int(method.split("/")[0].split("_")[1])
+                if (
+                    region_num not in region_results
+                    or conf > region_results[region_num][2]
+                ):
+                    region_results[region_num] = (text, method, conf)
+
+        # Combine regions in order
+        if region_results:
+            combined_text = []
+            for i in sorted(region_results.keys()):
+                text, method, conf = region_results[i]
+                cleaned = self.clean_text(text)
+                if cleaned:
+                    combined_text.append(cleaned)
+
+            if combined_text:
+                full_text = " ".join(combined_text)
+                avg_conf = sum(r[2] for r in region_results.values()) / len(
+                    region_results
                 )
-            )
-            if consonants / len(cleaned_text) > 0.7:
-                continue
+                combined_result = [(full_text, "combined_regions", avg_conf)]
 
-            processed_results.append((cleaned_text, method, confidence))
-            seen_texts.add(cleaned_text.lower())
+                # Add up to 2 more best individual results
+                results.sort(key=lambda x: (x[2], len(x[0])), reverse=True)
+                additional_results = [
+                    (self.clean_text(text), method, conf)
+                    for text, method, conf in results
+                    if len(self.clean_text(text)) > 20
+                    and (text, method, conf) not in combined_result
+                ][:2]
 
-        return processed_results
+                return combined_result + additional_results
+
+        # If all else fails, return up to 3 best single results
+        results.sort(key=lambda x: (x[2], len(x[0])), reverse=True)
+        final_results = []
+
+        for text, method, conf in results:
+            cleaned = self.clean_text(text)
+            # Minimum length for meaningful text
+            if cleaned and len(cleaned) > 20:
+                if (cleaned, method, conf) not in final_results:
+                    final_results.append((cleaned, method, conf))
+                    if len(final_results) == 3:
+                        break
+
+        return final_results
 
     def image_to_bytes(
         self,
@@ -284,82 +312,72 @@ class MemeProcessor:
 
     def extract_text(self, image: bytes) -> Tuple[
         str,
-        List[
-            Tuple[
-                str,
-                str,
-                float,
-            ],
-        ],
+        List[Tuple[str, str, float]],
     ]:
-        """Extract text from image using OCR by multiple preprocessing steps"""
+        """Extract text from image using OCR"""
         try:
             img = Image.open(BytesIO(image))
             logger.info(
                 f"Processing image of size {img.size}, mode {img.mode}",
             )
 
-            # Convert RGBA to RGB if needed
+            # Basic image preprocessing
             if img.mode == "RGBA":
-                img = Image.new("RGB", img.size, (255, 255, 255))
-                img.paste(image, mask=image.split()[3])
-                logger.debug("Converted RGBA image to RGB")
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                img = background
 
-            # Resize if image is too large
-            max_dimension = 1920
-            if max(img.size) > max_dimension:
-                ratio = max_dimension / max(img.size)
-                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-                logger.debug(f"Resized image to {new_size}")
-
-            # Process image with different methods
             processed_images = self.preprocess_image(img)
-
-            # Store all results with confidence
             all_results = []
 
             for proc_name, proc_img in processed_images:
                 for config_name, config in self.tesseract_config.items():
                     try:
-                        # Get text and confidence
+                        # Convert tuple config to string
+                        if isinstance(config, (tuple, list)):
+                            config = " ".join(str(x) for x in config)
+                        # Escape any remaining quotes
+                        config = config.replace('"', '\\"')
+
                         data = pytesseract.image_to_data(
                             proc_img,
                             config=config,
                             output_type=pytesseract.Output.DICT,
                         )
 
-                        # Calculate average confidence for words
-                        confidences = [
-                            int(conf) for conf in data["conf"] if conf != "-1"
-                        ]
-                        if not confidences:
-                            continue
+                        # Get confident words
+                        words = []
+                        confidences = []
 
-                        avg_confidence = sum(confidences) / len(confidences)
-                        text = " ".join(
-                            [
-                                word
-                                for i, word in enumerate(data["text"])
-                                if int(data["conf"][i])
-                                > 60  # Filter low confidence words
-                            ]
-                        )
+                        for i, (word, conf) in enumerate(
+                            zip(data["text"], data["conf"])
+                        ):
+                            if conf != -1 and float(conf) > 60:
+                                if word and word.strip():
+                                    words.append(word.strip())
+                                    confidences.append(float(conf))
 
-                        if text.strip():
-                            method = f"{proc_name}/{config_name}"
-                            all_results.append(
-                                (
-                                    text.strip(),
-                                    method,
-                                    avg_confidence,
-                                ),
+                        if words:
+                            text = " ".join(words)
+                            avg_confidence = sum(
+                                confidences,
+                            ) / len(
+                                confidences,
                             )
-                            logger.debug(
-                                f"Method {method}:\n"
-                                f"Text: {text}\n"
-                                f"Confidence: {avg_confidence:.1f}%"
-                            )
+
+                            if len(text) > 10:  # Only keep substantial text
+                                all_results.append(
+                                    (
+                                        text,
+                                        f"{proc_name}/{config_name}",
+                                        avg_confidence,
+                                    )
+                                )
+                                logger.debug(
+                                    f"Method {proc_name}/{config_name}:\n"
+                                    f"Text: {text}\n"
+                                    f"Confidence: {avg_confidence:.1f}%"
+                                )
 
                     except Exception as e:
                         logger.warning(
@@ -368,25 +386,29 @@ class MemeProcessor:
                         continue
 
             if not all_results:
-                logger.warning("No text found in any processing method")
                 return "", []
 
-            # Sort results by confidence and get top 3
-            all_results.sort(key=lambda x: x[2], reverse=True)
-            top_results = self.post_process_results(all_results[:3])
+            # Sort by confidence and length
+            all_results.sort(key=lambda x: (x[2], len(x[0])), reverse=True)
 
-            # Use the highest confidence result as the main result
-            best_text = top_results[0][0]
-
-            logger.info(
-                "Top 3 results:\n"
-                + "\n".join(
-                    [
-                        f"{i+1}. {text} ({method}, {conf:.1f}%)"
-                        for i, (text, method, conf) in enumerate(top_results)
-                    ]
+            # Try to get complete text results first
+            complete_results = [
+                (text, method, conf)
+                for text, method, conf in all_results
+                if len(text) > 100
+                and conf > 90
+                and not method.startswith(
+                    "region_",
                 )
-            )
+            ]
+
+            if complete_results:
+                best_text = complete_results[0][0]
+                top_results = self.post_process_results(complete_results)
+            else:
+                # Process all results including regions
+                top_results = self.post_process_results(all_results)
+                best_text = top_results[0][0] if top_results else ""
 
             return best_text.strip(), top_results
 
@@ -426,10 +448,11 @@ class MemeProcessor:
                 Body=image,
                 ContentType="image/jpeg",
             )
-            return (
+            result = [
                 f"https://{settings.S3_BUCKET_NAME}.s3.amazonaws.com/",
                 f"{filename}",
-            )
+            ]
+            return result.join("")
         except Exception as e:
             logger.error(f"Error uploading to S3: {e}")
             raise
